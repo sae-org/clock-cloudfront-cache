@@ -1,0 +1,70 @@
+name: Build and Push Docker Image to ECR
+
+on:
+  push:
+    branches: [ main ]   
+
+permissions:
+  id-token: write    
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::886687538523:role/gha-clock-cloudfront-iam-role
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: clock-cloudfront-ecr-repo
+          IMAGE_TAG: ${{ github.sha }} 
+        run: |
+          docker buildx create --use 
+          docker buildx build --platform linux/amd64,linux/arm64 \
+          -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
+          -t "$REGISTRY/$REPOSITORY:dev" \
+          --push .
+
+      # Retrieve controller connection details from Secrets Manager
+      - name: Fetch Ansible connection info
+        id: fetch
+        run: |
+          CONTROLLER_HOST=$(aws secretsmanager get-secret-value \
+            --secret-id ansible/controller/host \
+            --query SecretString --output text)
+          CONTROLLER_USER=$(aws secretsmanager get-secret-value \
+            --secret-id ansible/controller/user \
+            --query SecretString --output text)
+          CONTROLLER_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id ansible/controller/ssh_key_priv \
+            --query SecretString --output text)
+
+          printf '%s' "$CONTROLLER_KEY" > controller.pem
+          chmod 600 controller.pem
+
+          echo "CONTROLLER_HOST=$CONTROLLER_HOST" >> $GITHUB_ENV
+          echo "CONTROLLER_USER=$CONTROLLER_USER" >> $GITHUB_ENV
+
+      # Run playbook remotely
+      - name: Run Ansible Playbook on controller
+        run: |
+          ssh -i controller.pem -o StrictHostKeyChecking=no "$CONTROLLER_USER@$CONTROLLER_HOST" "
+            cd ~/ansible
+            ansible-playbook -i inventory/clock-cloudfront.aws_ec2.yml playbooks/clock-cloudfront.yml \
+              -e image_tag=${{ github.sha }} \
+              -e @group_vars/all/vault.yml \
+              --vault-password-file ~/ansible/secrets_script.sh
+          "
