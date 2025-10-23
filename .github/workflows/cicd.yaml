@@ -16,28 +16,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Get OIDC token (aud=sts.amazonaws.com)
-        id: idtoken
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('sts.amazonaws.com'); // core is already available
-            core.setOutput('token', token);
-
-      - name: Print JWT header & payload
-        run: |
-          node -e "
-            const tok = process.env.TOKEN;
-            const [h,p] = tok.split('.');
-            const b = s => Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');
-            console.log('--- JWT Header ---\\n' + b(h));
-            console.log('\\n--- JWT Payload ---\\n' + b(p));
-          "
-        env:
-          TOKEN: ${{ steps.idtoken.outputs.token }}
-
-
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
