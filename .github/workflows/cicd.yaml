@@ -16,6 +16,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug OIDC token claims
+        shell: bash
+        env:
+          GH_AUD: sts.amazonaws.com
+        run: |
+          set -euo pipefail
+          # Request an ID token from GitHub
+          resp=$(curl -sSL -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${GH_AUD}")
+          tok=$(echo "$resp" | jq -r .value)
+
+          echo "Raw JWT header:"
+          echo "$tok" | cut -d. -f1 | tr '_-' '/+' | base64 -d 2>/dev/null | jq .
+
+          echo "Raw JWT payload:"
+          payload=$(echo "$tok" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
+          echo "$payload" | jq .
+
+          echo "Parsed claims:"
+          echo "$payload" | jq -r '.aud, .sub'
+
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
