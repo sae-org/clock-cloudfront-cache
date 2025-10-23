@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, send_from_directory
 from datetime import datetime
+import os
 
 app = Flask(__name__, static_folder='static')
 
@@ -37,5 +38,4 @@ def health():
     return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
-    # For local dev only. In containers use gunicorn (see Dockerfile).
     app.run(host='0.0.0.0', port=80)

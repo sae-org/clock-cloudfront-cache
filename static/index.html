@@ -1,45 +1,45 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>CloudFront Cache Test</title>
-  <link rel="stylesheet" href="/app/static/styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudFront Cache Test</title>
+    <link rel="stylesheet" href="/app/static/styles.css">
 </head>
 <body>
-  <div class="container">
-    <h1>CloudFront Cache Testing</h1>
+    <div class="container">
+        <h1>CloudFront Cache Testing</h1>
+        
+        <div class="section">
+            <h2>Static Content (Cached)</h2>
+            <p>This HTML page and the CSS file are static and should be cached by CloudFront.</p>
+            <img src="/app/static/test-image.png" alt="Test" onerror="this.style.display='none'">
+        </div>
 
-    <div class="section">
-      <h2>Static Content (Cached)</h2>
-      <p>This HTML page and the CSS file are static and should be cached by CloudFront.</p>
-      <img src="/app/static/test-image.png" alt="Test" onerror="this.style.display='none'">
+        <div class="section">
+            <h2>Dynamic Content (Not Cached)</h2>
+            <button onclick="fetchTime()">Get Current Time</button>
+            <div id="timeResult" class="result"></div>
+        </div>
+
+        <div class="section">
+            <h2>Dynamic User API (Not Cached)</h2>
+            <input type="text" id="userId" placeholder="Enter user ID" value="123">
+            <button onclick="fetchUser()">Get User Data</button>
+            <div id="userResult" class="result"></div>
+        </div>
+
+        <div class="info">
+            <h3>Testing Instructions:</h3>
+            <ol>
+                <li>First load: All content fetched from origin</li>
+                <li>Refresh page: Static content (HTML, CSS) served from CloudFront cache</li>
+                <li>Click "Get Current Time" multiple times: Time should always update (not cached)</li>
+                <li>Check response headers in browser DevTools to see cache status</li>
+            </ol>
+        </div>
     </div>
 
-    <div class="section">
-      <h2>Dynamic Content (Not Cached)</h2>
-      <button onclick="fetchTime()">Get Current Time</button>
-      <div id="timeResult" class="result"></div>
-    </div>
-
-    <div class="section">
-      <h2>Dynamic User API (Not Cached)</h2>
-      <input type="text" id="userId" placeholder="Enter user ID" value="123"/>
-      <button onclick="fetchUser()">Get User Data</button>
-      <div id="userResult" class="result"></div>
-    </div>
-
-    <div class="info">
-      <h3>Testing Instructions:</h3>
-      <ol>
-        <li>First load: All content fetched from origin</li>
-        <li>Refresh page: Static content (HTML, CSS) served from CloudFront cache</li>
-        <li>Click “Get Current Time” multiple times: Time should always update (not cached)</li>
-        <li>Check response headers in browser DevTools to see cache status</li>
-      </ol>
-    </div>
-  </div>
-
-  <script src="/app/static/app.js"></script>
+    <script src="/app/static/app.js"></script>
 </body>
 </html>
