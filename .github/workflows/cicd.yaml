@@ -16,26 +16,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug OIDC token claims
-        shell: bash
-        env:
-          GH_AUD: sts.amazonaws.com
+      - name: Get OIDC token (aud=sts.amazonaws.com)
+        id: idtoken
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const core = require('@actions/core');
+            // This calls GitHub's OIDC endpoint and returns a signed JWT
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setOutput('token', token);
+
+      # 2) Print decoded header/payload safely (no jq needed)
+      - name: Print JWT header & payload (debug)
         run: |
-          set -euo pipefail
-          # Request an ID token from GitHub
-          resp=$(curl -sSL -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${GH_AUD}")
-          tok=$(echo "$resp" | jq -r .value)
-
-          echo "Raw JWT header:"
-          echo "$tok" | cut -d. -f1 | tr '_-' '/+' | base64 -d 2>/dev/null | jq .
-
-          echo "Raw JWT payload:"
-          payload=$(echo "$tok" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
-          echo "$payload" | jq .
-
-          echo "Parsed claims:"
-          echo "$payload" | jq -r '.aud, .sub'
+          node -e "
+            const tok = process.env.TOKEN;
+            const [h, p] = tok.split('.');
+            const b = s => Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'), 'base64').toString('utf8');
+            console.log('--- JWT Header ---\\n' + b(h));
+            console.log('\\n--- JWT Payload ---\\n' + b(p));
+          "
+        env:
+          TOKEN: ${{ steps.idtoken.outputs.token }}
 
 
       - name: Configure AWS credentials
