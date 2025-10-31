@@ -1,0 +1,111 @@
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    if: contains(github.event.head_commit.message, '[deploy-ecs]')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      ROLE_ARN: arn:aws:iam::886687538523:role/gha-clock-cloudfront-iam-role   
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Load ECS/ECR config from Secrets Manager
+        env: 
+          SECRET_ID: cicd/my-portfolio       
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ID" \
+            --query SecretString --output text > config.json
+          jq -r 'to_entries | .[] | "\(.key)=\(.value)"' config.json >> $GITHUB_ENV
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push Docker image
+        env: 
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: my-portfolio-dev-ecr-repo  
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+          -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
+          -t $REGISTRY/$REPOSITORY:latest \
+          --push .
+
+      - name: Register task definition (inline JSON)
+        id: register
+        shell: bash
+        run: |
+          IMAGE="$ECR_REPO_URL:$IMAGE_TAG"
+
+          cat > taskdef.json <<'JSON'
+          {
+            "family": "__FAMILY__",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "__CPU__",
+            "memory": "__MEMORY__",
+            "executionRoleArn": "__EXEC_ROLE__",
+            "taskRoleArn": "__TASK_ROLE__",
+            "containerDefinitions": [
+              {
+                "name": "__CONTAINER__",
+                "image": "__IMAGE__",
+                "essential": true,
+                "portMappings": [
+                  { "containerPort": __APP_PORT__, "protocol": "tcp" }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "__LOG_GROUP__",
+                    "awslogs-region": "__REGION__",
+                    "awslogs-stream-prefix": "web"
+                  }
+                }
+              }
+            ]
+          }
+          JSON
+
+          sed -i "s|__FAMILY__|${ECS_TASK_FAMILY}|g"       taskdef.json
+          sed -i "s|__CPU__|${TASK_CPU}|g"                 taskdef.json
+          sed -i "s|__MEMORY__|${TASK_MEMORY}|g"           taskdef.json
+          sed -i "s|__EXEC_ROLE__|${EXECUTION_ROLE_ARN}|g" taskdef.json
+          sed -i "s|__TASK_ROLE__|${TASK_ROLE_ARN}|g"      taskdef.json
+          sed -i "s|__CONTAINER__|${ECS_CONTAINER_NAME}|g" taskdef.json
+          sed -i "s|__IMAGE__|${IMAGE}|g"                  taskdef.json
+          sed -i "s|__APP_PORT__|${APP_PORT}|g"            taskdef.json
+          sed -i "s|__LOG_GROUP__|${LOG_GROUP}|g"          taskdef.json
+          sed -i "s|__REGION__|${AWS_REGION}|g"            taskdef.json
+
+          NEW_TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          echo "NEW_TD_ARN=$NEW_TD_ARN" >> $GITHUB_OUTPUT
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster  "$ECS_CLUSTER_NAME" \
+            --service  "$ECS_SERVICE_NAME" \
+            --task-definition "${{ steps.register.outputs.NEW_TD_ARN }}"
+
