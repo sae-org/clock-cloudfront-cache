@@ -27,7 +27,7 @@ jobs:
 
       - name: Load ECS/ECR config from Secrets Manager
         env: 
-          SECRET_ID: cicd/my-portfolio       
+          SECRET_ID: cicd/clock-cloudfront     
         run: |
           aws secretsmanager get-secret-value \
             --secret-id "$SECRET_ID" \
@@ -41,7 +41,7 @@ jobs:
       - name: Build & push Docker image
         env: 
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          REPOSITORY: my-portfolio-dev-ecr-repo  
+          REPOSITORY: clock-cloudfront-dev-ecr-repo  
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build \
