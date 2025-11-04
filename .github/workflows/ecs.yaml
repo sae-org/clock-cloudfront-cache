@@ -16,9 +16,11 @@ jobs:
     env:
       AWS_REGION: us-east-1
       ROLE_ARN: arn:aws:iam::886687538523:role/gha-clock-cloudfront-iam-role   
+      INFRA_REPO: sae-org/terraform-infrastructure
+      INFRA_PATH: dev/us-east-1/ecs/clock-cloudfront
 
     steps:
-      - name: Checkout
+      - name: Checkout app repo
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials (OIDC)
@@ -41,73 +43,41 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build & push Docker image
+        id: buildpush
         env: 
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPOSITORY: clock-cloudfront-dev-ecr-repo  
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build \
-          -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
-          -t $REGISTRY/$REPOSITORY:latest \
-          --push .
+          docker build -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" -t "$REGISTRY/$REPOSITORY:latest" .
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$REPOSITORY:latest"
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Register task definition (inline JSON)
-        id: register
-        shell: bash
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPO }}         
+          path: infra-repo
+          ref: main
+
+      # install terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - run: aws sts get-caller-identity
+
+      # run terraform in the folder that contains main.tf/outputs.tf/etc.
+      - name: Terraform init
+        working-directory: infra-repo/dev/us-east-1/ecs/clock-cloudfront
+        run: terraform init
+
+      # apply ONLY the ECS module, passing the new image tag from the build step
+      - name: Terraform apply (update ECS module)
+        working-directory: infra-repo/dev/us-east-1/ecs/clock-cloudfront
         run: |
-          IMAGE="$ECR_REPO_URL:$IMAGE_TAG"
-
-          cat > taskdef.json <<'JSON'
-          {
-            "family": "__FAMILY__",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "__CPU__",
-            "memory": "__MEMORY__",
-            "executionRoleArn": "__EXEC_ROLE__",
-            "taskRoleArn": "__TASK_ROLE__",
-            "containerDefinitions": [
-              {
-                "name": "__CONTAINER__",
-                "image": "__IMAGE__",
-                "essential": true,
-                "portMappings": [
-                  { "containerPort": __APP_PORT__, "protocol": "tcp" }
-                ],
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "__LOG_GROUP__",
-                    "awslogs-region": "__REGION__",
-                    "awslogs-stream-prefix": "web"
-                  }
-                }
-              }
-            ]
-          }
-          JSON
-
-          sed -i "s|__FAMILY__|${ECS_TASK_FAMILY}|g"       taskdef.json
-          sed -i "s|__CPU__|${TASK_CPU}|g"                 taskdef.json
-          sed -i "s|__MEMORY__|${TASK_MEMORY}|g"           taskdef.json
-          sed -i "s|__EXEC_ROLE__|${EXECUTION_ROLE_ARN}|g" taskdef.json
-          sed -i "s|__TASK_ROLE__|${TASK_ROLE_ARN}|g"      taskdef.json
-          sed -i "s|__CONTAINER__|${ECS_CONTAINER_NAME}|g" taskdef.json
-          sed -i "s|__IMAGE__|${IMAGE}|g"                  taskdef.json
-          sed -i "s|__APP_PORT__|${APP_PORT}|g"            taskdef.json
-          sed -i "s|__LOG_GROUP__|${LOG_GROUP}|g"          taskdef.json
-          sed -i "s|__REGION__|${AWS_REGION}|g"            taskdef.json
-
-          NEW_TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://taskdef.json \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-
-          echo "NEW_TD_ARN=$NEW_TD_ARN" >> $GITHUB_OUTPUT
-
-      - name: Update ECS service
-        run: |
-          aws ecs update-service \
-            --cluster  "$ECS_CLUSTER_NAME" \
-            --service  "$ECS_SERVICE_NAME" \
-            --task-definition "${{ steps.register.outputs.NEW_TD_ARN }}"
-
+          terraform apply -auto-approve \
+            -var="image_tag=${{ steps.buildpush.outputs.image_tag }}" \
+            -target=module.ecs     
